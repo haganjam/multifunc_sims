@@ -5,6 +5,7 @@
 
 # load relevant libraries
 library(readr)
+library(tibble)
 library(dplyr)
 library(tidyr)
 library(purrr)
@@ -14,6 +15,7 @@ library(RColorBrewer)
 library(viridis)
 library(here)
 library(vegan)
+library(betapart)
 
 
 # load the Jena community data
@@ -76,6 +78,7 @@ site_dat <-
   site_dat %>%
   filter(plotcode != "B4A03") %>%
   filter(year == 2007) %>%
+  filter(sowndiv < 60) %>%
   group_by(block, plot, plotcode, year) %>%
   summarise(across(.cols = c("sowndiv", "numfg", "numgrass", "numsherb",
                              "numtherb", "numleg", "gr.ef", "sh.ef", 
@@ -83,17 +86,22 @@ site_dat <-
             across(.cols = c("observed_species", "ens"), ~mean(x = .x, na.rm = TRUE)),
             .groups = "drop")
 
+site_dat$plotcode
+
 sp_dat <- 
   sp_dat %>%
-  filter(plotcode != "B4A03") %>%
+  filter(plotcode %in% site_dat$plotcode) %>%
   filter(year == 2007) %>%
   select(-month) %>%
   group_by(plotcode, year) %>%
   summarise(across(.cols = everything(), ~mean(x = .x, na.rm = TRUE)),
-            .groups = "drop")
-  
-  
+            .groups = "drop") %>%
+  select(-year) %>%
+  separate(col = plotcode, into = c("block", "plot"), sep = 2)
 
+sp_dat
+  
+  
 
 # load the multifunctionality data (Meyers et al. 2017)
 multi_dat <- read_delim(here("data/Jena_data_functions_final_year_available.csv"), delim = ";")
@@ -103,9 +111,6 @@ multi_dat
 multi_dat$Plot %>%
   unique() %>%
   length()
-
-# which plot is missing from the multifunctionality data?
-unique(site_dat$plotcode)[!( unique(site_dat$plotcode) %in% (multi_dat$Plot) )]
 
 # plot B4A03 (a monoculture which was removed from the analysis Meyer et al. 2017)
 
@@ -131,50 +136,62 @@ func_inv <- c("BM_weed_DW", "Cov_bare", "Cov_weed", "Mortality_hymenopt", "N_wee
               "N_seedb_weed", "N_seedl_weed", "Soil_NH4_AfterGrowth",
               "Soil_NO3_AfterGrowth", "Soil_P_AfterGrowth")
 
-# Invert functions in the spp_func_dat dataset
+# invert functions in the spp_func_dat dataset
 multi_dat <- 
   multi_dat %>% 
   mutate_at(func_inv, ~(.*-1))
 
+# remove plots with sowndiv = 60
+multi_dat <- 
+  multi_dat %>%
+  filter(plotcode %in% site_dat$plotcode)
+
+# split plotcode into plot and code
+multi_dat <- 
+  multi_dat %>%
+  separate(col = plotcode, into = c("block", "plot"), sep = 2)
+
+multi_dat
+
+# standardise the functions by the standard deviation
+
+# write a function to do the standardisation
+scale_this <- function(x) {
+  
+  (x - mean(x, na.rm = TRUE))/sd(x, na.rm = TRUE)
+}
+
+multi_dat <- 
+  multi_dat %>%
+  mutate(across(where(is.numeric), ~scale_this(.x))) %>%
+  mutate(across(where(is.numeric), ~(.x + abs(min(.x)) ) ) )
 
 
+# calculate diversity and multifunctionality metrics
 
+# beta diversity
+beta_div <- 
+  split(select(sp_dat, -block, -plot), sp_dat$block) %>%
+  lapply(., function(x) {
+    
+    beta.multi.abund(x = x, index.family = "bray") %>% 
+      unlist(.) %>%
+      enframe(., name = "beta", value = "bc_dis")
+    
+  } )
 
-# remove the B4A03 plot 
+bind_rows(beta_div, .id = "block")
 
+# beta multifunctionality
+beta_mf <- 
+  split(select(multi_dat, -block, -plot), multi_dat$block) %>%
+  lapply(., function(x) {
+    
+    beta.multi.abund(x = x, index.family = "bray") %>% 
+      unlist(.) %>%
+      enframe(., name = "beta_mf", value = "bc_dis_mf")
+    
+  } )
 
-# join the two datasets by their plotcode
-spp_multi <- full_join(spp_dat, func_dat, by = c("plotcode"))
-
-# Check the join
-# filter(spp_func_dat, plotcode == "B1A05") %>% select(10:15)
-# filter(spp_dat, plotcode == "B1A05")
-# filter(func_dat, plotcode == "B1A05")
-
-# Check colnames
-colnames(spp_func_dat)
-
-# Visualise some of the data: without the 60 diversity plot
-ggplot(data = spp_func_dat %>% filter(sowndiv < 60), 
-       mapping = aes(x = sowndiv, y = (-BM_weed_DW))) +
-  geom_point() +
-  geom_smooth(method = "lm")
-
-
-
-# Did I invert the correct functions?
-spp_func_dat %>% select(func_inv) #yes
-
-# Remove the sowndiv = 60 plots because there are only four of them in the data set
-spp_func_dat16 <- spp_func_dat %>% filter(sowndiv < 60)
-
-# Remove the plot variables besides plotcode and sowndiv
-colnames(spp_func_dat16)
-plot_data <- c("block", "plot", "numfg", "numgrass", "numsherb", "numtherb",
-               "numleg", "gr.ef", "sh.ef", "th.ef", "leg.ef") 
-
-spp_func_dat16 <- spp_func_dat16 %>% select(-plot_data)
-spp_func_dat16
-
-
+bind_rows(beta_mf, .id = "block")  
 
