@@ -166,41 +166,59 @@ multi_dat <-
   mutate(across(where(is.numeric), ~scale_this(.x))) %>%
   mutate(across(where(is.numeric), ~(.x + abs(min(.x)) ) ) )
 
+# get function names
+f_names <- 
+  multi_dat %>%
+  select(-block, -plot) %>%
+  names()
+
+
+# draw landscapes of n = 4 plots and write them into a list
+f_names
+sp_names
+
+samp_dat <- full_join(sp_dat, multi_dat, by = c("block", "plot"))
+
+# set number of landscapes
+n <- 100
+
+# set plots in landscapes
+p <- 4
+
+# set up output lists for: diversity
+l_scapes_div <- vector("list", length = n)
+names(l_scapes_div) <- paste0(c("l"), seq_along(1:n))
+
+# set up output lists for: multifunctionality
+l_scapes_mf <- vector("list", length = n)
+names(l_scapes_mf) <- paste0(c("l"), seq_along(1:n))
+
+for (i in seq_along(1:n)) {
+  
+    x <- samp_dat[ sample(x = seq_along(1:nrow(samp_dat)), size = p), replace = FALSE, ]
+    
+    l_scapes_div[[i]] <- 
+      x %>%
+      select(all_of(sp_names) )
+    
+    l_scapes_mf[[i]] <- 
+      x %>%
+      select(all_of(f_names) )
+  
+}
+
+l_scapes_div
+l_scapes_mf
 
 # calculate diversity and multifunctionality metrics
 
-# beta diversity
-beta_div <- 
-  split(select(sp_dat, -block, -plot), sp_dat$block) %>%
+# diversity metrics
+# alpha, beta, gamma diversity
+div <- 
+  l_scapes_div %>%
   lapply(., function(x) {
     
-    beta.multi.abund(x = x, index.family = "bray") %>% 
-      unlist(.) %>%
-      enframe(., name = "beta", value = "bc_dis")
-    
-  } )
-
-bind_rows(beta_div, .id = "block")
-
-# beta multifunctionality
-beta_mf <- 
-  split(select(multi_dat, -block, -plot), multi_dat$block) %>%
-  lapply(., function(x) {
-    
-    beta.multi.abund(x = x, index.family = "bray") %>% 
-      unlist(.) %>%
-      enframe(., name = "beta_mf", value = "bc_dis_mf")
-    
-  } )
-
-bind_rows(beta_mf, .id = "block")  
-
-
-# alpha diversity
-alpha_div <- 
-  split(select(sp_dat, -block, -plot), sp_dat$block) %>%
-  lapply(., function(x) {
-    
+    # alpha diversity (a)
     obs_spp <- 
       rowSums(decostand(x = x, method = "pa")) %>%
       mean(., na.rm = TRUE)
@@ -208,18 +226,41 @@ alpha_div <-
     ens <- exp(diversity(x = x, index = "shannon")) %>%
       mean(., na.rm = TRUE)
     
-    tibble(obs_spp, ens)
+    a <- tibble(obs_spp, ens)
+      
+    # beta diversity (b)
+    b <- 
+      beta.multi.abund(x = x, index.family = "bray") %>% 
+      unlist(.) %>%
+      enframe(., name = "beta", value = "bc_dis") %>%
+      spread(key = "beta", value = "bc_dis")
     
+    # gamma diversity (c)
+    z <- summarise(x, across(.cols = everything(), sum)) 
+    
+    obs_gamma <- 
+      rowSums(decostand(x = z, method = "pa"))
+    
+    ens_gamma <- exp(diversity(x = z, index = "shannon"))
+    
+    c <- tibble(obs_gamma , ens_gamma)
+    
+    # bind these diversity metrics
+    bind_cols(a, b, c)
+      
   } )
 
-bind_rows(alpha_div, .id = "block")
+div_out <- bind_rows(div, .id = "landscape")
 
 
-# alpha multifunctionality
-alpha_mf <- 
-  split(select(multi_dat, -block, -plot), multi_dat$block) %>%
+
+# multifunctionality metrics
+# alpha, beta, gamma multifunctionality
+mf <- 
+  l_scapes_mf %>%
   lapply(., function(x) {
     
+    # alpha multifunctionality
     ave_mf <- 
       (rowSums(x)/ncol(x) ) %>%
       mean(., na.rm = TRUE)
@@ -228,37 +269,16 @@ alpha_mf <-
       ( (rowSums(x)/ncol(x))/apply(x, 1, sd) ) %>%
       mean(., na.rm = TRUE)
     
-    tibble(ave_mf, s_ave_mf)
+    a <- tibble(ave_mf, s_ave_mf)
     
-  } )
-
-bind_rows(alpha_mf, .id = "block")
-
-
-# gamma diversity
-gamma_div <- 
-  split(select(sp_dat, -block, -plot), sp_dat$block) %>%
-  lapply(., function(x) {
+    # beta multifunctionality
+    b <- 
+      beta.multi.abund(x = x, index.family = "bray") %>% 
+      unlist(.) %>%
+      enframe(., name = "beta_mf", value = "bc_dis_mf") %>%
+      spread(key = "beta_mf", value = "bc_dis_mf")
     
-    z <- summarise(x, across(.cols = everything(), sum)) 
-    
-    obs_gamma <- 
-      rowSums(decostand(x = z, method = "pa"))
-    
-    ens_gamma <- exp(diversity(x = z, index = "shannon"))
-    
-    tibble(obs_gamma , ens_gamma)
-    
-  } )
-
-bind_rows(gamma_div, .id = "block")
-
-
-# gamma multifunctionality
-gamma_mf <- 
-  split(select(multi_dat, -block, -plot), multi_dat$block) %>%
-  lapply(., function(x) {
-    
+    # gamma multifunctionality
     z <- summarise(x, across(.cols = everything(), sum)) 
     
     gamma_mf <- 
@@ -266,10 +286,27 @@ gamma_mf <-
     
     s_gamma_mf <- 
       (rowSums(z)/ncol(z))/apply(z, MARGIN = 1, sd)
-      
-    tibble(gamma_mf  , s_gamma_mf)
+    
+    c <- tibble(gamma_mf  , s_gamma_mf)
+    
+    bind_cols(a, b, c)
     
   } )
 
-bind_rows(gamma_mf, .id = "block")
+mf_out <- bind_rows(mf, .id = "landscape")  
+
+
+### join the diversity metrics and multifunctionality metrics and examine relationships
+
+mf_sims <- full_join(div_out, mf_out, by = "landscape")
+names(mf_sims)
+
+ggplot(data = mf_sims, 
+       mapping = aes(x = ens, y = beta.BRAY.x)) +
+  geom_point()
+
+
+
+
+
 
