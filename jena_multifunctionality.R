@@ -3,6 +3,10 @@
 
 # Re-analysing the Jena data to examine how different components of multifunctionality respond to different aspects of diversity
 
+# Next steps: 
+# (1) hypothesise about which aspects of diversity affect which dimension of multifunctionality
+# (2) quantify species composition and multifunctional composition (and correlate)
+
 # load relevant libraries
 library(readr)
 library(tibble)
