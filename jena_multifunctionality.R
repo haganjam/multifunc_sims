@@ -30,11 +30,21 @@ jena_comm <-
 # create a vector of species names
 sp_names <- names(jena_comm)[51:110]
 
-# seperate the data into spp and site characteristics matrix
-site_dat <- 
+# the multifunctionality measurements are based on the final year of the data (2007)
+# if functions were measured in multiple years, they were averaged
+# also, they exclude plotcode = B4A03
+unique(site_dat$year)
+
+plot_codes <- 
   jena_comm %>%
   select(-sp_names)
+  filter(plotcode != "B4A03") %>%
+  filter(year == 2007) %>%
+  filter(sowndiv < 60, sowndiv > 1) %>%
+  pull(plotcode) %>%
+  unique()
 
+# separate out only the species data
 sp_dat <- 
   jena_comm %>% 
   select(plotcode, year, month, sp_names)
@@ -46,51 +56,12 @@ sp_dat <-
 
 # check if there are any -9999's in the species data
 sp_dat %>% 
-  filter_at(vars(sp_names), any_vars(. < 0)) # there are none!
+  filter_at(vars(sp_names), any_vars(. < 0))
 
-# calculate the number of species in the surveyed 3 x 3 m plots
-rowSums( decostand(select(sp_dat, sp_names), method = "pa") ) # number of species
-
-# add these observed species richness values to the site_dat dataset
-site_dat <- 
-  site_dat %>% 
-  mutate(observed_species = rowSums(decostand(select(sp_dat, sp_names), method = "pa")),
-         ens = exp(diversity(x = select(sp_dat, sp_names), index = "shannon")) )
-
-
-# remove unnecessary site_dat variables
-names(site_dat)
-site_dat <- 
-  site_dat %>%
-  select(plotcode:leg.ef, observed_species, ens)
-
-# check the plotcodes to see how many there are
-site_dat$plotcode %>% 
-  unique() %>%
-  length()
-
-# the multifunctionality measurements are based on the final year of the data (2007)
-# if functions were measured in multiple years, they were averaged
-# also, they exclude plotcode = B4A03
-unique(site_dat$year)
-
-site_dat <- 
-  site_dat %>%
-  filter(plotcode != "B4A03") %>%
-  filter(year == 2007) %>%
-  filter(sowndiv < 60) %>%
-  group_by(block, plot, plotcode, year) %>%
-  summarise(across(.cols = c("sowndiv", "numfg", "numgrass", "numsherb",
-                             "numtherb", "numleg", "gr.ef", "sh.ef", 
-                             "th.ef", "leg.ef"), ~first(x = .x)),
-            across(.cols = c("observed_species", "ens"), ~mean(x = .x, na.rm = TRUE)),
-            .groups = "drop")
-
-site_dat$plotcode
-
+# subset out the relevant data from the sp_dat data frame
 sp_dat <- 
   sp_dat %>%
-  filter(plotcode %in% site_dat$plotcode) %>%
+  filter(plotcode %in% plot_codes) %>%
   filter(year == 2007) %>%
   select(-month) %>%
   group_by(plotcode, year) %>%
@@ -102,7 +73,6 @@ sp_dat <-
 sp_dat
   
   
-
 # load the multifunctionality data (Meyers et al. 2017)
 multi_dat <- read_delim(here("data/Jena_data_functions_final_year_available.csv"), delim = ";")
 multi_dat
@@ -141,7 +111,23 @@ multi_dat <-
   multi_dat %>% 
   mutate_at(func_inv, ~(.*-1))
 
-# remove plots with sowndiv = 60
+# examine the ecosystem function measured
+names(multi_dat)
+
+# choose a subset of functions to remove (in my opinion)
+rem_func <- 
+  c("BM_weed_DW",
+    "Cov_weed",
+    "N_weeds",
+    "N_seedb_weed",
+    "N_seedl_weed")
+
+multi_dat <- 
+  multi_dat %>%
+  select(-all_of(rem_func) )
+
+
+# remove plots to match with community data
 multi_dat <- 
   multi_dat %>%
   filter(plotcode %in% site_dat$plotcode)
@@ -157,7 +143,6 @@ multi_dat
 
 # write a function to do the standardisation
 scale_this <- function(x) {
-  
   (x - mean(x, na.rm = TRUE))/sd(x, na.rm = TRUE)
 }
 
@@ -171,7 +156,6 @@ f_names <-
   multi_dat %>%
   select(-block, -plot) %>%
   names()
-
 
 # draw landscapes of n = 4 plots and write them into a list
 f_names
@@ -207,9 +191,6 @@ for (i in seq_along(1:n)) {
   
 }
 
-l_scapes_div
-l_scapes_mf
-
 # calculate diversity and multifunctionality metrics
 
 # diversity metrics
@@ -219,14 +200,19 @@ div <-
   lapply(., function(x) {
     
     # alpha diversity (a)
-    alpha <- 
-      rowSums(decostand(x = x, method = "pa")) %>%
-      mean(., na.rm = TRUE)
+    v <- rowSums(decostand(x = x, method = "pa"))
     
-    alpha_ens <- exp(diversity(x = x, index = "shannon")) %>%
-      mean(., na.rm = TRUE)
+    alpha <- mean(v, na.rm = TRUE)
     
-    a <- tibble(alpha, alpha_ens)
+    alpha_cv <- sd(v, na.rm = TRUE)/alpha
+    
+    w <- exp(diversity(x = x, index = "shannon"))
+    
+    alpha_ens <- mean(w, na.rm = TRUE)
+    
+    alpha_ens_cv <- sd(w, na.rm = TRUE)/alpha_ens
+    
+    a <- tibble(alpha, alpha_cv, alpha_ens, alpha_ens_cv)
       
     # beta diversity (b)
     b <- 
@@ -255,7 +241,6 @@ div <-
 div <- bind_rows(div, .id = "landscape")
 
 
-
 # multifunctionality metrics
 # alpha, beta, gamma multifunctionality
 mf <- 
@@ -263,21 +248,26 @@ mf <-
   lapply(., function(x) {
     
     # alpha multifunctionality
-    alpha_mf <- 
-      (rowSums(x)/ncol(x) ) %>%
-      mean(., na.rm = TRUE)
+    v <- (rowSums(x)/ncol(x) ) 
+    
+    alpha_mf <- mean(v, na.rm = TRUE)
+    
+    alpha_cv_mf <- sd(v, na.rm = TRUE)/alpha_mf
     
     alpha_s_mf <- 
-      ( (rowSums(x)/ncol(x))/apply(x, 1, sd) ) %>%
+      ( v/apply(x, 1, sd) ) %>%
       mean(., na.rm = TRUE)
     
-    a <- tibble(alpha_mf, alpha_s_mf)
+    a <- tibble(alpha_mf, alpha_cv_mf, alpha_s_mf)
     
     # beta multifunctionality
     b <- 
-      mean(vegdist(x = x, method = "euclidean"))
+      beta.multi.abund(x = x, index.family = "bray") %>% 
+      unlist(.) %>%
+      enframe(., name = "beta", value = "bc_dis") %>%
+      spread(key = "beta", value = "bc_dis")
     
-    b <- tibble(beta_euc = b)
+    names(b) <- c("beta_mf", "beta_bal_mf", "beta_gra_mf")
     
     # gamma multifunctionality
     z <- summarise(x, across(.cols = everything(), sum)) 
@@ -310,18 +300,33 @@ mf_sims %>%
 # check beta relationships
 mf_sims %>%
   select(contains("beta")) %>%
+  mutate(across(.cols = everything(), ~ car::logit(.x)) ) %>%
   pairs()
+
+mf_sims %>%
+  select(contains("beta")) %>%
+  mutate(across(.cols = everything(), ~ car::logit(.x)) ) %>%
+  cor(method = "spearman")
 
 # check gamma relationships
 mf_sims %>%
   select(contains("gamma")) %>%
   pairs()
 
+names(mf_sims)
+
 ggplot(data = mf_sims, 
-       mapping = aes(x = gamma, y = alpha)) +
+       mapping = aes(x = beta_gra, y = alpha_cv_mf)) +
   geom_point()
 
+ggplot(data = mf_sims, 
+       mapping = aes(x = beta, y = alpha)) +
+  geom_point()
 
+ggplot(data = mf_sims, 
+       mapping = aes(x = car::logit(beta), y = car::logit(beta_mf) )) +
+  geom_point() +
+  geom_smooth()
 
 
 
