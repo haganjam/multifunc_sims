@@ -195,3 +195,81 @@ beta_mf <-
 
 bind_rows(beta_mf, .id = "block")  
 
+
+# alpha diversity
+alpha_div <- 
+  split(select(sp_dat, -block, -plot), sp_dat$block) %>%
+  lapply(., function(x) {
+    
+    obs_spp <- 
+      rowSums(decostand(x = x, method = "pa")) %>%
+      mean(., na.rm = TRUE)
+    
+    ens <- exp(diversity(x = x, index = "shannon")) %>%
+      mean(., na.rm = TRUE)
+    
+    tibble(obs_spp, ens)
+    
+  } )
+
+bind_rows(alpha_div, .id = "block")
+
+
+# alpha multifunctionality
+alpha_mf <- 
+  split(select(multi_dat, -block, -plot), multi_dat$block) %>%
+  lapply(., function(x) {
+    
+    ave_mf <- 
+      (rowSums(x)/ncol(x) ) %>%
+      mean(., na.rm = TRUE)
+    
+    s_ave_mf <- 
+      ( (rowSums(x)/ncol(x))/apply(x, 1, sd) ) %>%
+      mean(., na.rm = TRUE)
+    
+    tibble(ave_mf, s_ave_mf)
+    
+  } )
+
+bind_rows(alpha_mf, .id = "block")
+
+
+# gamma diversity
+gamma_div <- 
+  split(select(sp_dat, -block, -plot), sp_dat$block) %>%
+  lapply(., function(x) {
+    
+    z <- summarise(x, across(.cols = everything(), sum)) 
+    
+    obs_gamma <- 
+      rowSums(decostand(x = z, method = "pa"))
+    
+    ens_gamma <- exp(diversity(x = z, index = "shannon"))
+    
+    tibble(obs_gamma , ens_gamma)
+    
+  } )
+
+bind_rows(gamma_div, .id = "block")
+
+
+# gamma multifunctionality
+gamma_mf <- 
+  split(select(multi_dat, -block, -plot), multi_dat$block) %>%
+  lapply(., function(x) {
+    
+    z <- summarise(x, across(.cols = everything(), sum)) 
+    
+    gamma_mf <- 
+      rowSums(z)/ncol(z)
+    
+    s_gamma_mf <- 
+      (rowSums(z)/ncol(z))/apply(z, MARGIN = 1, sd)
+      
+    tibble(gamma_mf  , s_gamma_mf)
+    
+  } )
+
+bind_rows(gamma_mf, .id = "block")
+
