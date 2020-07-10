@@ -195,7 +195,7 @@ names(l_scapes_mf) <- paste0(c("l"), seq_along(1:n))
 
 for (i in seq_along(1:n)) {
   
-    x <- samp_dat[ sample(x = seq_along(1:nrow(samp_dat)), size = p), replace = FALSE, ]
+    x <- samp_dat[ sample(x = seq_along(1:nrow(samp_dat)), size = p), replace = TRUE, ]
     
     l_scapes_div[[i]] <- 
       x %>%
@@ -219,14 +219,14 @@ div <-
   lapply(., function(x) {
     
     # alpha diversity (a)
-    obs_spp <- 
+    alpha <- 
       rowSums(decostand(x = x, method = "pa")) %>%
       mean(., na.rm = TRUE)
     
-    ens <- exp(diversity(x = x, index = "shannon")) %>%
+    alpha_ens <- exp(diversity(x = x, index = "shannon")) %>%
       mean(., na.rm = TRUE)
     
-    a <- tibble(obs_spp, ens)
+    a <- tibble(alpha, alpha_ens)
       
     # beta diversity (b)
     b <- 
@@ -235,22 +235,24 @@ div <-
       enframe(., name = "beta", value = "bc_dis") %>%
       spread(key = "beta", value = "bc_dis")
     
+    names(b) <- c("beta", "beta_bal", "beta_gra")
+    
     # gamma diversity (c)
     z <- summarise(x, across(.cols = everything(), sum)) 
     
-    obs_gamma <- 
+    gamma <- 
       rowSums(decostand(x = z, method = "pa"))
     
-    ens_gamma <- exp(diversity(x = z, index = "shannon"))
+    gamma_ens <- exp(diversity(x = z, index = "shannon"))
     
-    c <- tibble(obs_gamma , ens_gamma)
+    c <- tibble(gamma , gamma_ens)
     
     # bind these diversity metrics
     bind_cols(a, b, c)
       
   } )
 
-div_out <- bind_rows(div, .id = "landscape")
+div <- bind_rows(div, .id = "landscape")
 
 
 
@@ -261,22 +263,21 @@ mf <-
   lapply(., function(x) {
     
     # alpha multifunctionality
-    ave_mf <- 
+    alpha_mf <- 
       (rowSums(x)/ncol(x) ) %>%
       mean(., na.rm = TRUE)
     
-    s_ave_mf <- 
+    alpha_s_mf <- 
       ( (rowSums(x)/ncol(x))/apply(x, 1, sd) ) %>%
       mean(., na.rm = TRUE)
     
-    a <- tibble(ave_mf, s_ave_mf)
+    a <- tibble(alpha_mf, alpha_s_mf)
     
     # beta multifunctionality
     b <- 
-      beta.multi.abund(x = x, index.family = "bray") %>% 
-      unlist(.) %>%
-      enframe(., name = "beta_mf", value = "bc_dis_mf") %>%
-      spread(key = "beta_mf", value = "bc_dis_mf")
+      mean(vegdist(x = x, method = "euclidean"))
+    
+    b <- tibble(beta_euc = b)
     
     # gamma multifunctionality
     z <- summarise(x, across(.cols = everything(), sum)) 
@@ -284,25 +285,40 @@ mf <-
     gamma_mf <- 
       rowSums(z)/ncol(z)
     
-    s_gamma_mf <- 
+    gamma_s_mf <- 
       (rowSums(z)/ncol(z))/apply(z, MARGIN = 1, sd)
     
-    c <- tibble(gamma_mf  , s_gamma_mf)
+    c <- tibble(gamma_mf  , gamma_s_mf)
     
     bind_cols(a, b, c)
     
   } )
 
-mf_out <- bind_rows(mf, .id = "landscape")  
+mf <- bind_rows(mf, .id = "landscape")  
 
 
 ### join the diversity metrics and multifunctionality metrics and examine relationships
 
-mf_sims <- full_join(div_out, mf_out, by = "landscape")
+mf_sims <- full_join(div, mf, by = "landscape")
 names(mf_sims)
 
+# check alpha relationships
+mf_sims %>% 
+  select(contains("alpha")) %>%
+  pairs()
+
+# check beta relationships
+mf_sims %>%
+  select(contains("beta")) %>%
+  pairs()
+
+# check gamma relationships
+mf_sims %>%
+  select(contains("gamma")) %>%
+  pairs()
+
 ggplot(data = mf_sims, 
-       mapping = aes(x = ens, y = beta.BRAY.x)) +
+       mapping = aes(x = gamma, y = alpha)) +
   geom_point()
 
 
