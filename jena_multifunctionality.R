@@ -41,7 +41,7 @@ unique(site_dat$year)
 
 plot_codes <- 
   jena_comm %>%
-  select(-sp_names)
+  select(-sp_names) %>%
   filter(plotcode != "B4A03") %>%
   filter(year == 2007) %>%
   filter(sowndiv < 60, sowndiv > 1) %>%
@@ -71,8 +71,7 @@ sp_dat <-
   group_by(plotcode, year) %>%
   summarise(across(.cols = everything(), ~mean(x = .x, na.rm = TRUE)),
             .groups = "drop") %>%
-  select(-year) %>%
-  separate(col = plotcode, into = c("block", "plot"), sep = 2)
+  select(-year)
 
 sp_dat
   
@@ -134,12 +133,7 @@ multi_dat <-
 # remove plots to match with community data
 multi_dat <- 
   multi_dat %>%
-  filter(plotcode %in% site_dat$plotcode)
-
-# split plotcode into plot and code
-multi_dat <- 
-  multi_dat %>%
-  separate(col = plotcode, into = c("block", "plot"), sep = 2)
+  filter(plotcode %in% plot_codes)
 
 multi_dat
 
@@ -158,14 +152,14 @@ multi_dat <-
 # get function names
 f_names <- 
   multi_dat %>%
-  select(-block, -plot) %>%
+  select(-plotcode) %>%
   names()
 
 # draw landscapes of n = 4 plots and write them into a list
 f_names
 sp_names
 
-samp_dat <- full_join(sp_dat, multi_dat, by = c("block", "plot"))
+samp_dat <- full_join(sp_dat, multi_dat, by = c("plotcode"))
 
 # set number of landscapes
 n <- 100
@@ -317,20 +311,93 @@ mf_sims %>%
   select(contains("gamma")) %>%
   pairs()
 
-names(mf_sims)
 
-ggplot(data = mf_sims, 
-       mapping = aes(x = beta_gra, y = alpha_cv_mf)) +
-  geom_point()
+### quantify species composition and multifunctionality composition (identity)
 
-ggplot(data = mf_sims, 
-       mapping = aes(x = beta, y = alpha)) +
-  geom_point()
 
-ggplot(data = mf_sims, 
-       mapping = aes(x = car::logit(beta), y = car::logit(beta_mf) )) +
-  geom_point() +
-  geom_smooth()
+
+
+### do different species contribute to different functions?
+
+sp_dat
+
+func_list <- 
+  multi_dat %>%
+  pivot_longer(., cols = where(is.numeric), names_to = c("eco_function"), values_to = c("value") ) %>%
+  arrange(eco_function, plotcode) %>%
+  split(., .$eco_function)
+
+
+ses <- vector("list", length = length(sp_names[1:2]))
+
+for (i in seq_along(1:length(sp_names[1:2]))) {
+  
+  u <- 
+    sp_dat %>%
+    select(plotcode, all_of(sp_names[i])) %>%
+    rename(group = sp_names[i]) %>%
+    mutate(group = as.numeric(decostand(x = group, method = "pa")) )
+  
+  u
+  
+  # get the observed SES value for each species  
+  w <- 
+    full_join(u, func_list[[1]], by = "plotcode") %>%
+    group_by(group) %>%
+    summarise(mean_value = mean(value, na.rm = TRUE),
+              n = n(), .groups = "drop") %>%
+    summarise(SES = diff(mean_value),
+              n = abs(diff(n)) ) %>%
+    mutate(species = sp_names[i],
+           eco_function = f_names[i]) %>%
+    select(eco_function, species, SES, n)
+  
+  w
+  
+  # get the null expectation of observed values among species
+  
+  reps <- 10
+  
+  null_func <- 
+    
+    function(x) {
+      
+      s <- sample(x = seq_along(1:nrow(func_list[[1]])), 
+                  size = nrow(func_list[[1]]), replace = FALSE)
+      
+      bind_cols(u, select(func_list[[1]][s, ], value) ) %>%
+        group_by(group) %>%
+        summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+        summarise(SES_null = diff(mean_value)) %>%
+        mutate(species = sp_names[i]) %>%
+        select(species, SES_null) %>%
+        pull(SES_null)
+    }
+  
+  ses[[i]] <- bind_cols(w, null = replicate(n = reps, expr = null_func(x)))
+  
+}
+
+bind_rows(ses) %>%
+  group_by(species) %>%
+  summarise(SES = first(SES),
+            low_thres = quantile(x = null, probs = 0.025),
+            upp_thres = quantile(x = null, probs = 0.975), .groups = "keep") %>%
+  mutate(sig = if_else(SES > upp_thres | SES < low_thres, 1, 0))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
