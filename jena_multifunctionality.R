@@ -37,7 +37,7 @@ sp_names <- names(jena_comm)[51:110]
 # the multifunctionality measurements are based on the final year of the data (2007)
 # if functions were measured in multiple years, they were averaged
 # also, they exclude plotcode = B4A03
-unique(site_dat$year)
+unique(jena_comm$year)
 
 plot_codes <- 
   jena_comm %>%
@@ -162,10 +162,10 @@ sp_names
 samp_dat <- full_join(sp_dat, multi_dat, by = c("plotcode"))
 
 # set number of landscapes
-n <- 100
+n <- 1000
 
 # set plots in landscapes
-p <- 4
+p <- 8
 
 # set up output lists for: diversity
 l_scapes_div <- vector("list", length = n)
@@ -312,9 +312,48 @@ mf_sims %>%
   pairs()
 
 
+# check specific relationships
+mf_sims %>% names()
+
+ggplot(data = mf_sims, 
+       mapping = aes(x = alpha_cv_mf, y = car::logit(beta_gra_mf) )) +
+  geom_point() +
+  geom_smooth()
+
+ggplot(data = mf_sims, 
+       mapping = aes(x = alpha_cv_mf, y = car::logit(beta_bal_mf) )) +
+  geom_point() +
+  geom_smooth()
+
+ggplot(data = mf_sims, 
+       mapping = aes(x = car::logit(beta_bal), y = car::logit(beta_bal_mf), colour = alpha)) +
+  geom_point() +
+  scale_colour_viridis_c() +
+  geom_smooth()
+
+ggplot(data = mf_sims, 
+       mapping = aes(x = car::logit(beta_gra), y = car::logit(beta_gra_mf), colour = alpha_cv_mf)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+
 ### quantify species composition and multifunctionality composition (identity)
 
+# does turnover in species composition drive turnover in multifunctional composition?
 
+# use a mantel test
+multi_dat
+
+f_pca <- 
+  princomp(formula = reformulate(paste(f_names[1:30], sep = "+")), data = multi_dat, cor = FALSE)
+
+mantel(vegdist(x = select(sp_dat, -plotcode), method = "bray"),
+       vegdist(x = select(multi_dat, -plotcode), method = "euclidean"),
+       method = "pearson")
+
+plot(x = vegdist(x = select(sp_dat, -plotcode), method = "bray"),
+     y = vegdist(x = select(multi_dat, -plotcode), method = "euclidean"))
 
 
 ### do different species contribute to different functions?
@@ -327,65 +366,93 @@ func_list <-
   arrange(eco_function, plotcode) %>%
   split(., .$eco_function)
 
+length(func_list)
 
-ses <- vector("list", length = length(sp_names[1:2]))
+# let's try this with the first 10 functions
+func_list_test <- func_list[1:10]
 
-for (i in seq_along(1:length(sp_names[1:2]))) {
+# set the number of replications for the null expectation
+reps <- 10
+
+ses_spp <- 
+  lapply(func_list_test, function(x) {
   
-  u <- 
-    sp_dat %>%
-    select(plotcode, all_of(sp_names[i])) %>%
-    rename(group = sp_names[i]) %>%
-    mutate(group = as.numeric(decostand(x = group, method = "pa")) )
+  ses <- vector("list", length = length(sp_names))
   
-  u
-  
-  # get the observed SES value for each species  
-  w <- 
-    full_join(u, func_list[[1]], by = "plotcode") %>%
-    group_by(group) %>%
-    summarise(mean_value = mean(value, na.rm = TRUE),
-              n = n(), .groups = "drop") %>%
-    summarise(SES = diff(mean_value),
-              n = abs(diff(n)) ) %>%
-    mutate(species = sp_names[i],
-           eco_function = f_names[i]) %>%
-    select(eco_function, species, SES, n)
-  
-  w
-  
-  # get the null expectation of observed values among species
-  
-  reps <- 10
-  
-  null_func <- 
+  for (i in seq_along(1:length(sp_names))) {
     
-    function(x) {
+    u <- 
+      sp_dat %>%
+      select(plotcode, all_of(sp_names[i])) %>%
+      rename(group = sp_names[i]) %>%
+      mutate(group = as.numeric(decostand(x = group, method = "pa")) )
+    
+    u
+    
+    # get the observed SES value for each species  
+    w <- 
+      full_join(u, x, by = "plotcode") %>%
+      group_by(group) %>%
+      summarise(mean_value = mean(value, na.rm = TRUE),
+                n = n(), .groups = "drop") %>%
+      summarise(SES = diff(mean_value),
+                n = abs(diff(n)) ) %>%
+      mutate(species = sp_names[i],
+             eco_function = f_names[i]) %>%
+      select(eco_function, species, SES, n)
+    
+    w
+    
+    # get the null expectation of observed values among species
+    
+    null_func <- 
       
-      s <- sample(x = seq_along(1:nrow(func_list[[1]])), 
-                  size = nrow(func_list[[1]]), replace = FALSE)
-      
-      bind_cols(u, select(func_list[[1]][s, ], value) ) %>%
-        group_by(group) %>%
-        summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop") %>%
-        summarise(SES_null = diff(mean_value)) %>%
-        mutate(species = sp_names[i]) %>%
-        select(species, SES_null) %>%
-        pull(SES_null)
-    }
+      function(x) {
+        
+        s <- sample(x = seq_along(1:nrow(x)), 
+                    size = nrow(x), replace = FALSE)
+        
+        bind_cols(u, select(x[s, ], value) ) %>%
+          group_by(group) %>%
+          summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+          summarise(SES_null = diff(mean_value)) %>%
+          mutate(species = sp_names[i]) %>%
+          select(species, SES_null) %>%
+          pull(SES_null)
+      }
+    
+    ses[[i]] <- bind_cols(w, null = replicate(n = reps, expr = null_func(x)))
+    
+  }
   
-  ses[[i]] <- bind_cols(w, null = replicate(n = reps, expr = null_func(x)))
+  bind_rows(ses) %>%
+    group_by(species) %>%
+    summarise(SES = first(SES),
+              low_thres = quantile(x = null, probs = 0.025),
+              upp_thres = quantile(x = null, probs = 0.975), .groups = "keep") %>%
+    mutate(sig = if_else(SES > upp_thres | SES < low_thres, 1, 0)) %>%
+    ungroup()
   
-}
+})
 
-bind_rows(ses) %>%
-  group_by(species) %>%
-  summarise(SES = first(SES),
-            low_thres = quantile(x = null, probs = 0.025),
-            upp_thres = quantile(x = null, probs = 0.975), .groups = "keep") %>%
-  mutate(sig = if_else(SES > upp_thres | SES < low_thres, 1, 0))
+ses_spp
 
+spp <- 
+  lapply(ses_spp, function(x) {
+  
+  x %>%
+    select(species, sig) %>%
+    pivot_wider(., names_from = "species", values_from = "sig")
+  
+})
 
+bind_rows(spp, .id = "func") %>%
+  select(-func) %>%
+  vegdist(x = ., method = "bray")
+
+# if they do, then we can make some predictions about beta diversity
+
+# otherwise, if similar species contribute to the different functions, then this is useless
 
 
 
